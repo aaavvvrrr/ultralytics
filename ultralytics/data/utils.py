@@ -277,9 +277,8 @@ def check_det_dataset(dataset, autodownload=True):
 
     # Read YAML
     data = yaml_load(file, append_filename=True)  # dictionary
-    if data['val'] is None: # avr
-       data['val']='images/val'
-    
+    if data["val"] is None:  # avr
+        data["val"] = "images/val"
 
     # Checks
     for k in "train", "val":

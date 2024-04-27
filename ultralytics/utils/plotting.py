@@ -809,7 +809,7 @@ def plot_images(
     for i in range(bs):
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         # mosaic[y : y + h, x : x + w, :] = images[i].transpose(1, 2, 0)
-        mosaic[y : y + h, x : x + w, :images[i].shape[0]] = images[i].transpose(1, 2, 0) # avr
+        mosaic[y : y + h, x : x + w, : images[i].shape[0]] = images[i].transpose(1, 2, 0)  # avr
     # Resize (optional)
     scale = max_size / ns / max(h, w)
     if scale < 1:
