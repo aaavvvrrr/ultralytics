@@ -633,10 +633,13 @@ class BaseTrainer:
                 strip_optimizer(f)  # strip optimizers
                 if f is self.best:
                     LOGGER.info(f"\nValidating {f}...")
-                    self.validator.args.plots = self.args.plots
-                    self.metrics = self.validator(model=f)
-                    self.metrics.pop("fitness", None)
-                    self.run_callbacks("on_fit_epoch_end")
+                    try: # avr
+                        self.validator.args.plots = self.args.plots
+                        self.metrics = self.validator(model=f)
+                        self.metrics.pop("fitness", None)
+                        self.run_callbacks("on_fit_epoch_end")
+                    except Exception as e:
+                        print(e)
 
     def check_resume(self, overrides):
         """Check if resume checkpoint exists and update arguments accordingly."""
