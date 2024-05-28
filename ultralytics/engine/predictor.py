@@ -225,9 +225,12 @@ class BasePredictor:
 
             # Warmup model
             if not self.done_warmup:
-                self.model.warmup(imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz))
+                try:
+                    nch=source.shape[2]
+                except: 
+                    nch=3
+                self.model.warmup(imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, nch, *self.imgsz))
                 self.done_warmup = True
-
             self.seen, self.windows, self.batch = 0, [], None
             profilers = (
                 ops.Profile(device=self.device),
