@@ -662,9 +662,12 @@ class BaseTrainer:
                         k = "train_results"
                         torch.save({**torch.load(self.best), **{k: torch.load(self.last)[k]}}, self.best)
                     LOGGER.info(f"\nValidating {f}...")
-                    self.validator.args.plots = self.args.plots
-                    self.metrics = self.validator(model=f)
-                    self.metrics.pop("fitness", None)
+                    try:  # avr
+                        self.validator.args.plots = self.args.plots
+                        self.metrics = self.validator(model=f)
+                        self.metrics.pop("fitness", None)
+                    except Exception as e:
+                        print(e)
                     self.run_callbacks("on_fit_epoch_end")
 
     def check_resume(self, overrides):
