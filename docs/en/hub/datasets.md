@@ -26,7 +26,7 @@ Once uploaded, datasets can be immediately utilized for model training. This int
 
 Before you upload a dataset to [Ultralytics HUB](https://www.ultralytics.com/hub), make sure to **place your dataset YAML file inside the dataset root directory** and that **your dataset YAML, directory and ZIP have the same name**, as shown in the example below, and then zip the dataset directory.
 
-For example, if your dataset is called "coco8", as our [COCO8](https://docs.ultralytics.com/datasets/detect/coco8) example dataset, then you should have a `coco8.yaml` inside your `coco8/` directory, which will create a `coco8.zip` when zipped:
+For example, if your dataset is called "coco8", as our [COCO8](https://docs.ultralytics.com/datasets/detect/coco8/) example dataset, then you should have a `coco8.yaml` inside your `coco8/` directory, which will create a `coco8.zip` when zipped:
 
 ```bash
 zip -r coco8.zip coco8
@@ -48,7 +48,7 @@ The dataset YAML is the same standard YOLOv5 and YOLOv8 YAML format.
 
 After zipping your dataset, you should [validate it](https://docs.ultralytics.com/reference/hub/__init__/#ultralytics.hub.check_dataset) before uploading it to [Ultralytics HUB](https://www.ultralytics.com/hub). [Ultralytics HUB](https://www.ultralytics.com/hub) conducts the dataset validation check post-upload, so by ensuring your dataset is correctly formatted and error-free ahead of time, you can forestall any setbacks due to dataset rejection.
 
-```py
+```python
 from ultralytics.hub import check_dataset
 
 check_dataset("path/to/dataset.zip", task="detect")
