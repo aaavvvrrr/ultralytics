@@ -102,6 +102,9 @@ class BaseDataset(Dataset):
 
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
+        # avr
+        try:    self.randomWindow=hyp.randomWindow
+        except: self.randomWindow=0
 
     def get_img_files(self, img_path):
         """Read image files."""
@@ -287,17 +290,49 @@ class BaseDataset(Dataset):
         """Returns transformed label information for given index."""
         return self.transforms(self.get_image_and_label(index))
 
+    # avr 
+    def loadRandomWindow(self, labels,i):
+        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+        if im is None:  # not cached in RAM
+            if fn.exists():  # load npy
+                try:    im = np.load(fn)
+                except: im = cv2.imread(f)  # BGR
+            else:  im = cv2.imread(f)  # BGR
+            if im is None: raise FileNotFoundError(f"Image Not Found {f}")
+
+        h, w = im.shape[:2]
+        instances = labels.pop("instances")
+        instances.convert_bbox(format="xyxy")
+        instances.denormalize(w,h)
+        x0  = round(random.random()*(w-self.imgsz)) if w>self.imgsz else 0
+        y0  = round(random.random()*(h-self.imgsz)) if h>self.imgsz else 0
+        im = im[y0:y0+self.imgsz,x0:x0+self.imgsz]
+        instances.add_padding(-x0,-y0)
+        labels["img"]           = np.ascontiguousarray(im)
+        labels["instances"]     = instances
+        labels["ori_shape"]     = (self.imgsz,self.imgsz)
+        labels["resized_shape"] = (self.imgsz,self.imgsz)
+        labels["ratio_pad"]     = (1,1)
+        return labels
+
     def get_image_and_label(self, index):
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
+        # avr
+        if self.rect:
+            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        if self.randomWindow:
+            labels = self.update_labels_info(label)
+            return self.loadRandomWindow(self, labels,index)
+        # avr end
         label.pop("shape", None)  # shape is for rect, remove it
         label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
         label["ratio_pad"] = (
             label["resized_shape"][0] / label["ori_shape"][0],
             label["resized_shape"][1] / label["ori_shape"][1],
         )  # for evaluation
-        if self.rect:
-            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        # if self.rect:
+        #     label["rect_shape"] = self.batch_shapes[self.batch[index]]
         return self.update_labels_info(label)
 
     def __len__(self):
