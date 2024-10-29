@@ -16,7 +16,8 @@ from torch.utils.data import Dataset
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
-
+from ultralytics.utils.instance import Bboxes # avr
+from ultralytics.utils.ops import resample_segments # avr
 
 class BaseDataset(Dataset):
     """
@@ -103,7 +104,8 @@ class BaseDataset(Dataset):
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
         # avr
-        try:    self.randomWindow=hyp.randomWindow
+        try:
+            self.randomWindow=hyp.randomWindow
         except: self.randomWindow=0
 
     def get_img_files(self, img_path):
@@ -290,8 +292,10 @@ class BaseDataset(Dataset):
         """Returns transformed label information for given index."""
         return self.transforms(self.get_image_and_label(index))
 
-    # avr 
-    def loadRandomWindow(self, labels,i):
+    # avr
+    def loadRandomWindow(self, labels,i,imgsz):
+        labels = self.update_labels_info(labels)
+        from shapely.geometry import Polygon, MultiPolygon
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy
@@ -301,18 +305,47 @@ class BaseDataset(Dataset):
             if im is None: raise FileNotFoundError(f"Image Not Found {f}")
 
         h, w = im.shape[:2]
+        cls       = labels.pop("cls")
         instances = labels.pop("instances")
         instances.convert_bbox(format="xyxy")
         instances.denormalize(w,h)
-        x0  = round(random.random()*(w-self.imgsz)) if w>self.imgsz else 0
-        y0  = round(random.random()*(h-self.imgsz)) if h>self.imgsz else 0
-        im = im[y0:y0+self.imgsz,x0:x0+self.imgsz]
+        x0  = round(random.random()*(w-imgsz)) if w>imgsz else 0
+        y0  = round(random.random()*(h-imgsz)) if h>imgsz else 0
+        im = im[y0:y0+imgsz,x0:x0+imgsz]
         instances.add_padding(-x0,-y0)
+        clipping_rect = Polygon([(0, 0), (imgsz, 0), (imgsz, imgsz), (0, imgsz)])
+        segments=[]
+        clipped_cls    = []
+        clipped_bboxes = []
+        for i,poly in enumerate(instances.segments):
+            polygon = Polygon(poly)
+            clipped_polygon = polygon.intersection(clipping_rect)
+            if not clipped_polygon.is_empty:
+                if isinstance(clipped_polygon, Polygon):
+                    clipped_coords = np.array(clipped_polygon.exterior.coords)
+                    segments.append(clipped_coords)
+                    clipped_bboxes.append(clipped_polygon.bounds)
+                    clipped_cls.append(cls[i])
+                elif isinstance(clipped_polygon, MultiPolygon):
+                    for geom in clipped_polygon.geoms:
+                        clipped_coords = np.array(geom.exterior.coords)
+                        segments.append(clipped_coords)
+                        clipped_bboxes.append(geom.bounds)
+                        clipped_cls.append(cls[i])
+        if len(segments) > 0:
+            instances.segments = np.stack(resample_segments(segments, n=1000), axis=0)
+            clipped_bboxes     = np.array(clipped_bboxes,dtype='float32')
+        else:
+            instances.segments = np.zeros((0, 1000, 2), dtype=np.float32)
+            clipped_bboxes     = np.zeros(shape=(0, 4),dtype='float32')
+
+        instances._bboxes       = Bboxes(bboxes=clipped_bboxes, format='xyxy')
         labels["img"]           = np.ascontiguousarray(im)
         labels["instances"]     = instances
-        labels["ori_shape"]     = (self.imgsz,self.imgsz)
-        labels["resized_shape"] = (self.imgsz,self.imgsz)
+        labels["ori_shape"]     = (imgsz,imgsz)
+        labels["resized_shape"] = (imgsz,imgsz)
         labels["ratio_pad"]     = (1,1)
+        labels["cls"]           = np.array(clipped_cls,dtype='float32')
         return labels
 
     def get_image_and_label(self, index):
@@ -322,8 +355,7 @@ class BaseDataset(Dataset):
         if self.rect:
             label["rect_shape"] = self.batch_shapes[self.batch[index]]
         if self.randomWindow:
-            labels = self.update_labels_info(label)
-            return self.loadRandomWindow(self, labels,index)
+            return self.loadRandomWindow(label,index,self.imgsz)
         # avr end
         label.pop("shape", None)  # shape is for rect, remove it
         label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
