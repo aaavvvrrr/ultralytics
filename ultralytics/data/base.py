@@ -19,6 +19,25 @@ from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
 from ultralytics.utils.instance import Bboxes # avr
 from ultralytics.utils.ops import resample_segments # avr
 
+# avr
+# class avrClip:
+#     def __init__(self,imgsz):
+#         self.imgsz=imgsz
+#     def __call__(self, labels):
+#         img = labels["img"]
+#         h, w = img.shape[1:3]
+#         instances = labels.pop("instances")
+#         instances.convert_bbox(format="xyxy")
+#         instances.denormalize(w,h)
+#         y0 = max(0,h-self.imgsz)//2
+#         x0 = max(0,w-self.imgsz)//2
+#         im = img[:,y0:y0+self.imgsz,x0:x0+self.imgsz]
+#         instances.add_padding(-x0,-y0)
+#         labels["img"]       = np.ascontiguousarray(im)
+#         labels["instances"] = instances
+#         return labels
+
+
 class BaseDataset(Dataset):
     """
     Base dataset class for loading and processing image data.
@@ -106,6 +125,8 @@ class BaseDataset(Dataset):
         # avr
         try:
             self.randomWindow=hyp.randomWindow
+            # if self.randomWindow:
+            #     self.transforms.append(avrClip(self.imgsz))
         except: self.randomWindow=0
 
     def get_img_files(self, img_path):
@@ -296,38 +317,54 @@ class BaseDataset(Dataset):
     def loadRandomWindow(self, labels,i,imgsz):
         labels = self.update_labels_info(labels)
         from shapely.geometry import Polygon, MultiPolygon
+        from shapely.affinity import rotate, translate
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy
-                try:    im = np.load(fn)
+                try:    im = self.ims[i] = np.load(fn, mmap_mode='r')
                 except: im = cv2.imread(f)  # BGR
             else:  im = cv2.imread(f)  # BGR
             if im is None: raise FileNotFoundError(f"Image Not Found {f}")
 
-        h, w = im.shape[:2]
+        h, w      = im.shape[:2]
+        imgsz_x2  = imgsz*2
         cls       = labels.pop("cls")
         instances = labels.pop("instances")
         instances.convert_bbox(format="xyxy")
         instances.denormalize(w,h)
-        x0  = round(random.random()*(w-imgsz)) if w>imgsz else 0
-        y0  = round(random.random()*(h-imgsz)) if h>imgsz else 0
-        im = im[y0:y0+imgsz,x0:x0+imgsz]
-        instances.add_padding(-x0,-y0)
+        try:     center_x = np.random.randint(imgsz_x2 // 2, w - imgsz_x2 // 2)
+        except:  center_x = w//2
+        try:     center_y = np.random.randint(imgsz_x2 // 2, h - imgsz_x2 // 2)
+        except:  center_y = h//2
+        angle    = np.random.uniform(0, 360)
+        M        = cv2.getRotationMatrix2D((imgsz, imgsz), angle, 1)
+        cropped_img   = im[center_y - imgsz:center_y + imgsz, center_x - imgsz:center_x + imgsz]
+        rotated_img   = cv2.warpAffine(cropped_img, M, (imgsz_x2, imgsz_x2))
+        final_img     = rotated_img[imgsz // 2:imgsz*3 // 2,imgsz // 2:imgsz*3 // 2]
+        # final_img8    = final_img.astype('uint8')
         clipping_rect = Polygon([(0, 0), (imgsz, 0), (imgsz, imgsz), (0, imgsz)])
         segments=[]
         clipped_cls    = []
         clipped_bboxes = []
         for i,poly in enumerate(instances.segments):
-            polygon = Polygon(poly)
-            clipped_polygon = polygon.intersection(clipping_rect)
+            poly = Polygon(poly)
+            poly = translate(poly, -center_x, -center_y)
+            poly = rotate   (poly, -angle, origin=(0,0))
+            # poly = translate(poly, center_x, center_y)
+            poly = translate(poly, imgsz // 2, imgsz // 2)
+            clipped_polygon = poly.intersection(clipping_rect)
             if not clipped_polygon.is_empty:
                 if isinstance(clipped_polygon, Polygon):
+                    if not clipped_polygon.is_valid:
+                        clipped_polygon=clipped_polygon.buffer(0)
                     clipped_coords = np.array(clipped_polygon.exterior.coords)
                     segments.append(clipped_coords)
                     clipped_bboxes.append(clipped_polygon.bounds)
                     clipped_cls.append(cls[i])
                 elif isinstance(clipped_polygon, MultiPolygon):
                     for geom in clipped_polygon.geoms:
+                        if not geom.is_valid:
+                            geom=geom.buffer(0)
                         clipped_coords = np.array(geom.exterior.coords)
                         segments.append(clipped_coords)
                         clipped_bboxes.append(geom.bounds)
@@ -340,7 +377,7 @@ class BaseDataset(Dataset):
             clipped_bboxes     = np.zeros(shape=(0, 4),dtype='float32')
 
         instances._bboxes       = Bboxes(bboxes=clipped_bboxes, format='xyxy')
-        labels["img"]           = np.ascontiguousarray(im)
+        labels["img"]           = np.ascontiguousarray(final_img)
         labels["instances"]     = instances
         labels["ori_shape"]     = (imgsz,imgsz)
         labels["resized_shape"] = (imgsz,imgsz)
