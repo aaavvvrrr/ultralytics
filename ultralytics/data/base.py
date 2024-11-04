@@ -314,76 +314,104 @@ class BaseDataset(Dataset):
         return self.transforms(self.get_image_and_label(index))
 
     # avr
-    def loadRandomWindow(self, labels,i,imgsz):
-        labels = self.update_labels_info(labels)
-        from shapely.geometry import Polygon, MultiPolygon
-        from shapely.affinity import rotate, translate
-        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
-        if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
-                try:    im = self.ims[i] = np.load(fn, mmap_mode='r')
-                except: im = cv2.imread(f)  # BGR
-            else:  im = cv2.imread(f)  # BGR
-            if im is None: raise FileNotFoundError(f"Image Not Found {f}")
+    def loadRandomWindow(self, labels,i,_imgsz):
+        while True:
+            try:
+                ulabels = deepcopy(self.update_labels_info(labels))
+                from shapely.geometry import Polygon, MultiPolygon
+                from shapely.affinity import rotate, translate
+                im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+                if im is None:  # not cached in RAM
+                    # fn = fn.parent / (re.sub(r'\$\$\w', '', fn.stem) + fn.suffix)
+                    if fn.exists():  # load npy
+                        try:    im = self.ims[i] = np.load(fn, mmap_mode='r')
+                        except: im = cv2.imread(f)  # BGR
+                    else:  im = cv2.imread(f)  # BGR
+                    if im is None: raise FileNotFoundError(f"Image Not Found {f}")
 
-        h, w      = im.shape[:2]
-        imgsz_x2  = imgsz*2
-        cls       = labels.pop("cls")
-        instances = labels.pop("instances")
-        instances.convert_bbox(format="xyxy")
-        instances.denormalize(w,h)
-        try:     center_x = np.random.randint(imgsz_x2 // 2, w - imgsz_x2 // 2)
-        except:  center_x = w//2
-        try:     center_y = np.random.randint(imgsz_x2 // 2, h - imgsz_x2 // 2)
-        except:  center_y = h//2
-        angle    = np.random.uniform(0, 360)
-        M        = cv2.getRotationMatrix2D((imgsz, imgsz), angle, 1)
-        cropped_img   = im[center_y - imgsz:center_y + imgsz, center_x - imgsz:center_x + imgsz]
-        rotated_img   = cv2.warpAffine(cropped_img, M, (imgsz_x2, imgsz_x2))
-        final_img     = rotated_img[imgsz // 2:imgsz*3 // 2,imgsz // 2:imgsz*3 // 2]
-        # final_img8    = final_img.astype('uint8')
-        clipping_rect = Polygon([(0, 0), (imgsz, 0), (imgsz, imgsz), (0, imgsz)])
-        segments=[]
-        clipped_cls    = []
-        clipped_bboxes = []
-        for i,poly in enumerate(instances.segments):
-            poly = Polygon(poly)
-            poly = translate(poly, -center_x, -center_y)
-            poly = rotate   (poly, -angle, origin=(0,0))
-            # poly = translate(poly, center_x, center_y)
-            poly = translate(poly, imgsz // 2, imgsz // 2)
-            clipped_polygon = poly.intersection(clipping_rect)
-            if not clipped_polygon.is_empty:
-                if isinstance(clipped_polygon, Polygon):
-                    if not clipped_polygon.is_valid:
-                        clipped_polygon=clipped_polygon.buffer(0)
-                    clipped_coords = np.array(clipped_polygon.exterior.coords)
-                    segments.append(clipped_coords)
-                    clipped_bboxes.append(clipped_polygon.bounds)
-                    clipped_cls.append(cls[i])
-                elif isinstance(clipped_polygon, MultiPolygon):
-                    for geom in clipped_polygon.geoms:
-                        if not geom.is_valid:
-                            geom=geom.buffer(0)
-                        clipped_coords = np.array(geom.exterior.coords)
-                        segments.append(clipped_coords)
-                        clipped_bboxes.append(geom.bounds)
-                        clipped_cls.append(cls[i])
-        if len(segments) > 0:
-            instances.segments = np.stack(resample_segments(segments, n=1000), axis=0)
-            clipped_bboxes     = np.array(clipped_bboxes,dtype='float32')
-        else:
-            instances.segments = np.zeros((0, 1000, 2), dtype=np.float32)
-            clipped_bboxes     = np.zeros(shape=(0, 4),dtype='float32')
+                height, width      = im.shape[:2]
+                scalePwr     = 0
+                if   height>_imgsz*8 and width>_imgsz*8: scalePwr=2
+                elif height>_imgsz*4 and width>_imgsz*4: scalePwr=1
+                scale     = 1 << random.randint(0,scalePwr)
+                scaled_height,scaled_width     = height//scale, width//scale
 
-        instances._bboxes       = Bboxes(bboxes=clipped_bboxes, format='xyxy')
-        labels["img"]           = np.ascontiguousarray(final_img)
-        labels["instances"]     = instances
-        labels["ori_shape"]     = (imgsz,imgsz)
-        labels["resized_shape"] = (imgsz,imgsz)
-        labels["ratio_pad"]     = (1,1)
-        labels["cls"]           = np.array(clipped_cls,dtype='float32')
-        return labels
+                imgsz     = _imgsz*scale
+                imgsz_x2  = imgsz*2
+                cls       = ulabels.pop("cls")
+                instances = ulabels.pop("instances")
+                instances.convert_bbox(format="xyxy")
+                instances.denormalize(scaled_width,scaled_height)
+                try:     center_x = np.random.randint(imgsz_x2 // 2, width - imgsz_x2 // 2) & 0xffffffc
+                except:  center_x = width//2
+                try:     center_y = np.random.randint(imgsz_x2 // 2, height - imgsz_x2 // 2) & 0xffffffc
+                except:  center_y = height//2
+                angle    = np.random.uniform(0, 360)
+                cropped_img   = im[center_y - imgsz:center_y + imgsz, center_x - imgsz:center_x + imgsz]
+                if  cropped_img.dtype == np.uint16:
+                    cropped_img = cropped_img.astype(np.float32) / 256
+                if scale>1:
+                    cropped_img = cv2.resize(cropped_img,(imgsz_x2//scale, imgsz_x2//scale))
+                    center_x  //= scale
+                    center_y  //= scale
+                    imgsz     = _imgsz
+                    imgsz_x2  = imgsz*2
+                M             = cv2.getRotationMatrix2D((imgsz, imgsz), angle, 1)
+                rotated_img   = cv2.warpAffine(cropped_img, M, (imgsz_x2, imgsz_x2))
+                final_img     = rotated_img[imgsz // 2:imgsz*3 // 2,imgsz // 2:imgsz*3 // 2]
+                # final_img8    = final_img.astype('uint8')
+                clipping_rect = Polygon([(0, 0), (imgsz, 0), (imgsz, imgsz), (0, imgsz)])
+                segments=[]
+                clipped_cls    = []
+                clipped_bboxes = []
+                for i,poly in enumerate(instances.segments):
+                    poly = Polygon(poly)
+                    poly = translate(poly, -center_x, -center_y)
+                    poly = rotate   (poly, -angle, origin=(0,0))
+                    # poly = translate(poly, center_x, center_y)
+                    poly = translate(poly, imgsz // 2, imgsz // 2)
+                    if not poly.is_valid:
+                        poly=poly.buffer(0)
+                    clipped_polygon = poly.intersection(clipping_rect)
+                    if not clipped_polygon.is_empty:
+                        if isinstance(clipped_polygon, Polygon):
+                            if not clipped_polygon.is_valid:
+                                clipped_polygon=clipped_polygon.buffer(0)
+                            clipped_coords = np.array(clipped_polygon.exterior.coords)
+                            segments.append(clipped_coords)
+                            clipped_bboxes.append(clipped_polygon.bounds)
+                            clipped_cls.append(cls[i])
+                        elif isinstance(clipped_polygon, MultiPolygon):
+                            for geom in clipped_polygon.geoms:
+                                if not geom.is_valid:
+                                    geom=geom.buffer(0)
+                                clipped_coords = np.array(geom.exterior.coords)
+                                segments.append(clipped_coords)
+                                clipped_bboxes.append(geom.bounds)
+                                clipped_cls.append(cls[i])
+                if len(segments) > 0:
+                    instances.segments = np.stack(resample_segments(segments, n=1000), axis=0)
+                    clipped_bboxes     = np.array(clipped_bboxes,dtype='float32')
+                else:
+                    instances.segments = np.zeros((0, 1000, 2), dtype=np.float32)
+                    clipped_bboxes     = np.zeros(shape=(0, 4),dtype='float32')
+
+                instances._bboxes       = Bboxes(bboxes=clipped_bboxes, format='xyxy')
+                ulabels["img"]           = np.ascontiguousarray(final_img)
+                ulabels["instances"]     = instances
+                ulabels["ori_shape"]     = (imgsz,imgsz)
+                ulabels["resized_shape"] = (imgsz,imgsz)
+                ulabels["ratio_pad"]     = (1,1)
+                ulabels["cls"]           = np.array(clipped_cls,dtype='float32')
+                return ulabels
+            except Exception as e:
+                import traceback
+                tb = e.__traceback__
+                tb_info = traceback.extract_tb(tb)
+                filename, line_number, function_name, text = tb_info[-1]
+                estr = f' {filename}, {line_number}, {function_name}, {text} <br> <b>{e}</b>'
+                print(estr)
+
 
     def get_image_and_label(self, index):
         """Get and return label information from the dataset."""
