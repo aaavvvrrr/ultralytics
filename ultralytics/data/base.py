@@ -324,7 +324,7 @@ class BaseDataset(Dataset):
                 if im is None:  # not cached in RAM
                     # fn = fn.parent / (re.sub(r'\$\$\w', '', fn.stem) + fn.suffix)
                     if fn.exists():  # load npy
-                        try:    im = self.ims[i] = np.load(fn, mmap_mode='r')
+                        try:    im = np.load(fn, mmap_mode='r')
                         except: im = cv2.imread(f)  # BGR
                     else:  im = cv2.imread(f)  # BGR
                     if im is None: raise FileNotFoundError(f"Image Not Found {f}")
