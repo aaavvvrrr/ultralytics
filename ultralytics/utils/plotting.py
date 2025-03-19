@@ -1023,13 +1023,12 @@ def plot_images(
     ns = np.ceil(bs**0.5)  # number of subplots (square)
     # if np.max(images[0]) <= 1:
     #     images *= 255  # de-normalise (optional)
-    mx=np.max(images[0])
     # Build Image
     mosaic = np.full((int(ns * h), int(ns * w), 3), 32, dtype=np.uint8)  # init
     for i in range(bs):
         image=images[i]
-        if mx >= 255 or mx<=32 : # avr
-            image = np.clip((image - np.mean(image)) * (255 / np.std(image)), 0, 255)
+        for j in range(image.shape[0]):
+            image[j] = np.clip((image[j] - np.mean(image[j])) * (255 / (np.std(image[j])+1e-16)), 0, 255)
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         # mosaic[y : y + h, x : x + w, :] = images[i].transpose(1, 2, 0)
         mosaic  [y : y + h, x : x + w, : image.shape[0]] = image.transpose(1, 2, 0)  # avr
