@@ -20,7 +20,7 @@ from ultralytics.utils.instance import Bboxes # avr
 from ultralytics.utils.ops import resample_segments # avr
 
 # avr
-monitored_files=['1.jpg','-',0,0,0,0]*32
+monitored_files=[['1.jpg','-',0,0,0,0]]*32
 monitored_counter=0
 monitored_flag=0
 
