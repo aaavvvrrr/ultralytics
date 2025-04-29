@@ -20,6 +20,35 @@ from ultralytics.utils.instance import Bboxes # avr
 from ultralytics.utils.ops import resample_segments # avr
 
 # avr
+monitored_files=['1.jpg','-',0,0,0,0]*32
+monitored_counter=0
+monitored_flag=0
+
+def render_label_avr(img, coords, cls):
+    """
+    Рисует контур полигона на изображении img.
+    
+    :param img: Изображение (numpy array), на которое будет нарисован контур
+    :param coords: Координаты полигона (N x 2)
+    :param cls: Индекс класса (int)
+    """
+    # Преобразуем координаты в тип int32
+    coords = np.array(coords, dtype=np.int32)
+
+    # Генерируем цвет на основе индекса класса (cls)
+    # Можно использовать хэширование или просто умножение
+    np.random.seed(cls)  # чтобы цвет был одинаковым для одного и того же cls
+    color = tuple(map(int, np.random.randint(0, 255, size=3)))
+
+    # Рисуем контур
+    cv2.polylines(
+        img=img,
+        pts=[coords],
+        isClosed=True,
+        color=color,
+        thickness=2,
+        lineType=cv2.LINE_AA
+    )
 # class avrClip:
 #     def __init__(self,imgsz):
 #         self.imgsz=imgsz
@@ -395,7 +424,6 @@ class BaseDataset(Dataset):
 
     # avr
     def loadRandomWindow(self, labels,index,_imgsz):
-        iii=index
         while True:
             try:
                 try: 
@@ -404,13 +432,13 @@ class BaseDataset(Dataset):
                     ulabels = deepcopy(labels)
                 from shapely.geometry import Polygon, MultiPolygon
                 from shapely.affinity import rotate, translate
-                try: im, f, fn = self.ims[index], self.im_files[index], self.npy_files[index]
+                try: im, f, filename = self.ims[index], self.im_files[index], self.npy_files[index]
                 except:
-                    im, f, fn = 0,0,0
+                    im, f, filename = 0,0,0
                 if im is None:  # not cached in RAM
-                    # fn = fn.parent / (re.sub(r'\$\$\w', '', fn.stem) + fn.suffix)
-                    if fn.exists():  # load npy
-                        try:    im = np.load(fn, mmap_mode='r')
+                    # filename = filename.parent / (re.sub(r'\$\$\w', '', filename.stem) + filename.suffix)
+                    if filename.exists():  # load npy
+                        try:    im = np.load(filename, mmap_mode='r')
                         except: im = cv2.imread(f)  # BGR
                     else:  im = cv2.imread(f)  # BGR
                     if im is None: raise FileNotFoundError(f"Image Not Found {f}")
@@ -445,7 +473,9 @@ class BaseDataset(Dataset):
                 M             = cv2.getRotationMatrix2D((imgsz, imgsz), angle, 1)
                 rotated_img   = cv2.warpAffine(cropped_img, M, (imgsz_x2, imgsz_x2))
                 final_img     = rotated_img[imgsz // 2:imgsz*3 // 2,imgsz // 2:imgsz*3 // 2]
-                # final_img8    = final_img.astype('uint8')
+                final_img     = np.ascontiguousarray(final_img)
+                if monitored_flag:
+                    final_img8    = final_img.astype('uint8')
                 clipping_rect = Polygon([(0, 0), (imgsz, 0), (imgsz, imgsz), (0, imgsz)])
                 segments=[]
                 clipped_cls    = []
@@ -459,22 +489,22 @@ class BaseDataset(Dataset):
                     if not poly.is_valid:
                         poly=poly.buffer(0)
                     clipped_polygon = poly.intersection(clipping_rect)
+                    def prc_geom(geom):
+                        if not geom.is_valid:
+                            geom=geom.buffer(0)
+                        clipped_coords = np.array(geom.exterior.coords)
+                        segments.append(clipped_coords)
+                        clipped_bboxes.append(geom.bounds)
+                        clipped_cls.append(cls[i])
+                        if monitored_flag:
+                            render_label_avr(final_img8,clipped_coords,cls[i])
+
                     if not clipped_polygon.is_empty:
                         if isinstance(clipped_polygon, Polygon):
-                            if not clipped_polygon.is_valid:
-                                clipped_polygon=clipped_polygon.buffer(0)
-                            clipped_coords = np.array(clipped_polygon.exterior.coords)
-                            segments.append(clipped_coords)
-                            clipped_bboxes.append(clipped_polygon.bounds)
-                            clipped_cls.append(cls[i])
+                            prc_geom(clipped_polygon)
                         elif isinstance(clipped_polygon, MultiPolygon):
                             for geom in clipped_polygon.geoms:
-                                if not geom.is_valid:
-                                    geom=geom.buffer(0)
-                                clipped_coords = np.array(geom.exterior.coords)
-                                segments.append(clipped_coords)
-                                clipped_bboxes.append(geom.bounds)
-                                clipped_cls.append(cls[i])
+                                prc_geom(clipped_polygon)
                 if len(segments) > 0:
                     instances.segments = np.stack(resample_segments(segments, n=1000), axis=0)
                     clipped_bboxes     = np.array(clipped_bboxes,dtype='float32')
@@ -483,12 +513,19 @@ class BaseDataset(Dataset):
                     clipped_bboxes     = np.zeros(shape=(0, 4),dtype='float32')
 
                 instances._bboxes       = Bboxes(bboxes=clipped_bboxes, format='xyxy')
-                ulabels["img"]           = np.ascontiguousarray(final_img)
+                ulabels["img"]           = final_img
                 ulabels["instances"]     = instances
                 ulabels["ori_shape"]     = (imgsz,imgsz)
                 ulabels["resized_shape"] = (imgsz,imgsz)
                 ulabels["ratio_pad"]     = (1,1)
                 ulabels["cls"]           = np.array(clipped_cls,dtype='float32')
+                if monitored_flag:
+                    global monitored_counter,monitored_files
+                    os.makedirs('./train_tiles',exist_ok=True)
+                    img_name=f'./train_tiles/{monitored_counter}.jpg'
+                    cv2.imwrite(img_name,final_img8)
+                    monitored_files[monitored_counter]=[img_name,filename,center_x*scale,center_y*scale,scale,angle]
+                    monitored_counter=(monitored_counter+1) % 32
                 return ulabels
             except Exception as e:
                 import traceback
