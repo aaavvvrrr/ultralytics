@@ -394,13 +394,19 @@ class BaseDataset(Dataset):
         return self.transforms(self.get_image_and_label(index))
 
     # avr
-    def loadRandomWindow(self, labels,i,_imgsz):
+    def loadRandomWindow(self, labels,index,_imgsz):
+        iii=index
         while True:
             try:
-                ulabels = deepcopy(self.update_labels_info(labels))
+                try: 
+                    ulabels = deepcopy(self.update_labels_info(labels))
+                except:
+                    ulabels = deepcopy(labels)
                 from shapely.geometry import Polygon, MultiPolygon
                 from shapely.affinity import rotate, translate
-                im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+                try: im, f, fn = self.ims[index], self.im_files[index], self.npy_files[index]
+                except:
+                    im, f, fn = 0,0,0
                 if im is None:  # not cached in RAM
                     # fn = fn.parent / (re.sub(r'\$\$\w', '', fn.stem) + fn.suffix)
                     if fn.exists():  # load npy
