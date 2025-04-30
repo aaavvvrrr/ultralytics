@@ -21,7 +21,6 @@ from ultralytics.utils.ops import resample_segments # avr
 
 # avr
 monitored_files=[['1.jpg','-',0,0,0,0]]*32
-monitored_counter=0
 monitored_flag=0
 
 def render_label_avr(img, coords, cls):
@@ -37,7 +36,7 @@ def render_label_avr(img, coords, cls):
 
     # Генерируем цвет на основе индекса класса (cls)
     # Можно использовать хэширование или просто умножение
-    np.random.seed(cls)  # чтобы цвет был одинаковым для одного и того же cls
+    np.random.seed(int(cls))  # чтобы цвет был одинаковым для одного и того же cls
     color = tuple(map(int, np.random.randint(0, 255, size=3)))
 
     # Рисуем контур
@@ -46,7 +45,7 @@ def render_label_avr(img, coords, cls):
         pts=[coords],
         isClosed=True,
         color=color,
-        thickness=2,
+        thickness=1,
         lineType=cv2.LINE_AA
     )
 # class avrClip:
@@ -147,6 +146,7 @@ class BaseDataset(Dataset):
             fraction (float, optional): Fraction of dataset to utilize.
         """
         super().__init__()
+        self.monitored_counter=0
         self.img_path = img_path
         self.imgsz = imgsz
         self.augment = augment
@@ -476,6 +476,9 @@ class BaseDataset(Dataset):
                 final_img     = np.ascontiguousarray(final_img)
                 if monitored_flag:
                     final_img8    = final_img.astype('uint8')
+                    os.makedirs('./train_tiles',exist_ok=True)
+                    img_name=f'./train_tiles/{self.monitored_counter}.jpg'
+                    cv2.imwrite(img_name,final_img8)
                 clipping_rect = Polygon([(0, 0), (imgsz, 0), (imgsz, imgsz), (0, imgsz)])
                 segments=[]
                 clipped_cls    = []
@@ -497,14 +500,14 @@ class BaseDataset(Dataset):
                         clipped_bboxes.append(geom.bounds)
                         clipped_cls.append(cls[i])
                         if monitored_flag:
-                            render_label_avr(final_img8,clipped_coords,cls[i])
+                            render_label_avr(final_img8,clipped_coords,cls[i][0])
 
                     if not clipped_polygon.is_empty:
                         if isinstance(clipped_polygon, Polygon):
                             prc_geom(clipped_polygon)
                         elif isinstance(clipped_polygon, MultiPolygon):
                             for geom in clipped_polygon.geoms:
-                                prc_geom(clipped_polygon)
+                                prc_geom(geom)
                 if len(segments) > 0:
                     instances.segments = np.stack(resample_segments(segments, n=1000), axis=0)
                     clipped_bboxes     = np.array(clipped_bboxes,dtype='float32')
@@ -520,12 +523,16 @@ class BaseDataset(Dataset):
                 ulabels["ratio_pad"]     = (1,1)
                 ulabels["cls"]           = np.array(clipped_cls,dtype='float32')
                 if monitored_flag:
-                    global monitored_counter,monitored_files
-                    os.makedirs('./train_tiles',exist_ok=True)
-                    img_name=f'./train_tiles/{monitored_counter}.jpg'
-                    cv2.imwrite(img_name,final_img8)
-                    monitored_files[monitored_counter]=[img_name,filename,center_x*scale,center_y*scale,scale,angle]
-                    monitored_counter=(monitored_counter+1) % 32
+                    img_name_m=f'./train_tiles/{self.monitored_counter}m.jpg'
+                    cv2.imwrite(img_name_m,final_img8)
+                    monitored_files[self.monitored_counter%32]=[img_name,img_name_m,filename.stem,center_x*scale,center_y*scale,scale,angle]
+                    self.monitored_counter+=1
+                    if self.monitored_counter>=8192:
+                        try:
+                            os.remove(f'./train_tiles/{self.monitored_counter-8192}.jpg')
+                            os.remove(f'./train_tiles/{self.monitored_counter-8192}m.jpg')
+                        except:
+                            ...
                 return ulabels
             except Exception as e:
                 import traceback
